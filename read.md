@@ -9,9 +9,10 @@ mix run -e "HnScraper.print_newest_news()"
 # 获取JSON格式
 mix run -e "IO.puts(HnScraper.fetch_top_news_json(10))"
 mix run -e "IO.puts(HnScraper.fetch_newest_news_json(10))"
+mix run -e "HnScraper.Scheduler.next_run_time()"
 
 
-
+psql -U postgres -h localhost\
 
 
 -- 1. 创建数据库
@@ -73,3 +74,30 @@ mix run -e 'HnScraper.run("2026-02-09 19:00:00")'
 # 如果数据库连接失败，数据会自动保存到 save_after_error/ 目录
 数据入库成功时显示 ✓，失败时自动保存到 save_after_error/ 目录
 备份文件命名格式：{news_time}_top.txt / {news_time}_newest.txt
+
+
+
+✅ GenServer 调度器已实现并测试成功！
+
+新增文件：
+
+lib/hn_scraper/scheduler.ex - 调度器（每整点运行）
+lib/hn_scraper/application.ex - 应用启动入口
+启动方式：
+
+bash
+# 前台运行（带日志）
+mix run --no-halt
+# 后台运行
+nohup mix run --no-halt > scheduler.log 2>&1 &
+# 使用 iex 交互式运行
+iex -S mix
+输出示例：
+
+🚀 HnScraper 调度器启动
+⏰ 下次运行时间: 2026-02-09 20:00:00 (3 分钟后)
+API 接口：
+
+HnScraper.Scheduler.next_run_time() - 查看下次运行时间
+HnScraper.Scheduler.run_now() - 立即手动触发
+HnScraper.Scheduler.stop() - 停止调度器

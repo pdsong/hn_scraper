@@ -13,6 +13,7 @@ defmodule HnScraper.MixProject do
 
   def application do
     [
+      mod: {HnScraper.Application, []},
       extra_applications: [:logger]
     ]
   end

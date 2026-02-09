@@ -6,13 +6,10 @@ defmodule HnScraper do
   - fetch_top_news/1: 爬取首页热门新闻 (https://news.ycombinator.com)
   - fetch_newest_news/1: 爬取最新新闻 (https://news.ycombinator.com/newest)
 
-  每页30条，最多爬取300条（10页）
+  主入口:
+  - run/1: 同时爬取热门和最新新闻，存入数据库
 
-  返回格式:
-  [
-    %{rank_id: 1, up_id: "46943551", url: "https://...", title: "..."},
-    ...
-  ]
+  每页30条，最多爬取300条（10页）
   """
 
   @base_url "https://news.ycombinator.com"
@@ -21,6 +18,52 @@ defmodule HnScraper do
   @items_per_page 30
   @max_items 300
   @max_pages div(@max_items, @items_per_page)
+  @save_dir "save_after_error"
+
+  # ============================================
+  # 主入口函数
+  # ============================================
+
+  @doc """
+  主运行函数，同时爬取热门和最新新闻并存入数据库
+
+  ## 参数
+    - news_time: 新闻时间字符串，如 "2026-02-09 19:00:00"
+    - max_items: 最大爬取数量，默认300
+
+  ## 示例
+      iex> HnScraper.run("2026-02-09 19:00:00")
+      iex> HnScraper.run("2026-02-09 19:00:00", 100)
+  """
+  def run(news_time, max_items \\ @max_items) do
+    IO.puts("========================================")
+    IO.puts("开始爬取 Hacker News - #{news_time}")
+    IO.puts("========================================")
+
+    # 确保保存目录存在
+    ensure_save_dir()
+
+    # 同时爬取热门和最新新闻
+    top_task = Task.async(fn -> fetch_top_news(max_items) end)
+    newest_task = Task.async(fn -> fetch_newest_news(max_items) end)
+
+    top_news = Task.await(top_task, :infinity)
+    newest_news = Task.await(newest_task, :infinity)
+
+    IO.puts("\n========================================")
+    IO.puts("爬取完成，开始入库...")
+    IO.puts("========================================")
+
+    # 入库或保存到文件
+    save_news(top_news, "top", news_time)
+    save_news(newest_news, "newest", news_time)
+
+    IO.puts("\n========================================")
+    IO.puts("全部处理完成！")
+    IO.puts("========================================")
+
+    %{top: length(top_news), newest: length(newest_news)}
+  end
 
   # ============================================
   # 公共 API
@@ -28,56 +71,22 @@ defmodule HnScraper do
 
   @doc """
   爬取 Hacker News 首页热门新闻
-
-  ## 参数
-    - max_items: 最大爬取数量，默认300
-
-  ## 返回值
-    返回新闻列表，每条新闻包含:
-    - rank_id: 排名序号 (1-300)
-    - up_id: HN 新闻的唯一ID
-    - url: 新闻链接
-    - title: 新闻标题
-
-  ## 示例
-      iex> HnScraper.fetch_top_news(10)
-      [
-        %{rank_id: 1, up_id: "46943551", url: "https://example.com/article", title: "Article Title"},
-        ...
-      ]
   """
   def fetch_top_news(max_items \\ @max_items) do
-    IO.puts("=== 爬取首页热门新闻 ===")
+    IO.puts("\n=== 爬取首页热门新闻 ===")
     fetch_news_from_url(@top_url, max_items)
   end
 
   @doc """
   爬取 Hacker News 最新新闻
-
-  ## 参数
-    - max_items: 最大爬取数量，默认300
-
-  ## 返回值
-    返回新闻列表，每条新闻包含:
-    - rank_id: 排名序号 (1-300)
-    - up_id: HN 新闻的唯一ID
-    - url: 新闻链接
-    - title: 新闻标题
-
-  ## 示例
-      iex> HnScraper.fetch_newest_news(10)
-      [
-        %{rank_id: 1, up_id: "46943551", url: "https://example.com/article", title: "Article Title"},
-        ...
-      ]
   """
   def fetch_newest_news(max_items \\ @max_items) do
-    IO.puts("=== 爬取最新新闻 ===")
+    IO.puts("\n=== 爬取最新新闻 ===")
     fetch_news_from_url(@newest_url, max_items)
   end
 
   @doc """
-  打印首页热门新闻（用于调试）
+  打印首页热门新闻
   """
   def print_top_news(max_items \\ @max_items) do
     news = fetch_top_news(max_items)
@@ -85,7 +94,7 @@ defmodule HnScraper do
   end
 
   @doc """
-  打印最新新闻（用于调试）
+  打印最新新闻
   """
   def print_newest_news(max_items \\ @max_items) do
     news = fetch_newest_news(max_items)
@@ -107,10 +116,71 @@ defmodule HnScraper do
   end
 
   # ============================================
+  # 私有函数 - 数据保存
+  # ============================================
+
+  # 保存新闻到数据库，失败则保存到文件
+  defp save_news(news_list, news_type, news_time) do
+    IO.puts("正在保存 #{news_type} 新闻 (#{length(news_list)} 条)...")
+
+    case HnScraper.DB.insert_news(news_list, news_type, news_time) do
+      {:ok, count} ->
+        IO.puts("✓ #{news_type} 新闻入库成功，共 #{count} 条")
+        :ok
+
+      {:error, reason} ->
+        IO.puts("✗ #{news_type} 新闻入库失败: #{inspect(reason)}")
+        IO.puts("  正在保存到本地文件...")
+        save_to_file(news_list, news_type, news_time)
+    end
+  end
+
+  # 保存到本地文件
+  defp save_to_file(news_list, news_type, news_time) do
+    # 格式化文件名中的时间（替换特殊字符）
+    safe_time = news_time |> String.replace(~r/[:\s]/, "_")
+    filename = "#{@save_dir}/#{safe_time}_#{news_type}.txt"
+
+    content =
+      news_list
+      |> Enum.map(fn item ->
+        "#{item.rank_id}. [#{item.up_id}] #{item.title}\n   URL: #{item.url}"
+      end)
+      |> Enum.join("\n\n")
+
+    header = """
+    ========================================
+    Hacker News #{String.upcase(news_type)} News
+    News Time: #{news_time}
+    Saved At: #{DateTime.utc_now() |> DateTime.to_string()}
+    Total: #{length(news_list)} items
+    ========================================
+
+    """
+
+    case File.write(filename, header <> content) do
+      :ok ->
+        IO.puts("  ✓ 已保存到 #{filename}")
+        {:ok, filename}
+
+      {:error, reason} ->
+        IO.puts("  ✗ 保存文件失败: #{inspect(reason)}")
+        {:error, reason}
+    end
+  end
+
+  # 确保保存目录存在
+  defp ensure_save_dir do
+    unless File.exists?(@save_dir) do
+      File.mkdir_p!(@save_dir)
+      IO.puts("创建目录: #{@save_dir}")
+    end
+  end
+
+  # ============================================
   # 私有函数 - 核心爬取逻辑
   # ============================================
 
-  # 从指定URL开始爬取新闻
   defp fetch_news_from_url(start_url, max_items) do
     max_pages = min(div(max_items + @items_per_page - 1, @items_per_page), @max_pages)
 
@@ -119,12 +189,10 @@ defmodule HnScraper do
     |> add_rank_ids()
   end
 
-  # 递归爬取所有页面 - 终止条件
   defp fetch_all_pages(_url, max_pages, current_page, acc) when current_page > max_pages do
     Enum.reverse(acc)
   end
 
-  # 递归爬取所有页面 - 递归体
   defp fetch_all_pages(url, max_pages, current_page, acc) do
     IO.puts("正在爬取第 #{current_page} 页: #{url}")
 
@@ -133,7 +201,6 @@ defmodule HnScraper do
         new_acc = Enum.reverse(items) ++ acc
 
         if next_url && current_page < max_pages do
-          # 添加延迟避免请求过快
           Process.sleep(500)
           fetch_all_pages(next_url, max_pages, current_page + 1, new_acc)
         else
@@ -146,7 +213,6 @@ defmodule HnScraper do
     end
   end
 
-  # 爬取单个页面，返回新闻列表和下一页URL
   defp fetch_page(url) do
     headers = [
       {"User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
@@ -168,7 +234,6 @@ defmodule HnScraper do
   # 私有函数 - HTML解析
   # ============================================
 
-  # 解析页面HTML，提取新闻列表和下一页链接
   defp parse_page(html) do
     {:ok, document} = Floki.parse_document(html)
 
@@ -178,10 +243,6 @@ defmodule HnScraper do
     {items, next_url}
   end
 
-  # 解析所有新闻条目
-  # HN页面结构:
-  # - 每条新闻由两行组成: .athing (标题行) 和 .subtext (元信息行)
-  # - .athing 包含 id 属性和标题链接
   defp parse_news_items(document) do
     document
     |> Floki.find("tr.athing")
@@ -189,7 +250,6 @@ defmodule HnScraper do
     |> Enum.filter(&(&1 != nil))
   end
 
-  # 解析单条新闻
   defp parse_single_item(item) do
     up_id = Floki.attribute(item, "id") |> List.first()
     title_link = Floki.find(item, ".titleline > a") |> List.first()
@@ -215,13 +275,11 @@ defmodule HnScraper do
     end
   end
 
-  # 规范化URL（处理相对路径）
   defp normalize_url(nil), do: nil
   defp normalize_url("item?" <> _ = path), do: "#{@base_url}/#{path}"
   defp normalize_url("/" <> _ = path), do: "#{@base_url}#{path}"
   defp normalize_url(url), do: url
 
-  # 解析下一页链接
   defp parse_next_page(document) do
     more_link = Floki.find(document, "a.morelink") |> List.first()
 
@@ -239,14 +297,12 @@ defmodule HnScraper do
   # 私有函数 - 辅助工具
   # ============================================
 
-  # 为新闻列表添加排名序号
   defp add_rank_ids(items) do
     items
     |> Enum.with_index(1)
     |> Enum.map(fn {item, index} -> %{item | rank_id: index} end)
   end
 
-  # 打印新闻列表
   defp print_news_list(news) do
     Enum.each(news, fn item ->
       IO.puts("#{item.rank_id}. [#{item.up_id}] #{item.title}")
@@ -258,7 +314,6 @@ defmodule HnScraper do
     news
   end
 
-  # 转换为JSON格式
   defp to_json(news) do
     news
     |> Enum.map(fn item ->

@@ -20,7 +20,8 @@ defmodule HnScraper.MixProject do
   defp deps do
     [
       {:httpoison, "~> 2.0"},
-      {:floki, "~> 0.35"}
+      {:floki, "~> 0.35"},
+      {:postgrex, "~> 0.17"}
     ]
   end
 end

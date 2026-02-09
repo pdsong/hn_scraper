@@ -6,60 +6,29 @@ mix run -e "HnScraper.print_newest_news(5)"
 # 爬取全部300条
 mix run -e "HnScraper.print_top_news()"
 mix run -e "HnScraper.print_newest_news()"
-# 获取JSON格式
 mix run -e "IO.puts(HnScraper.fetch_top_news_json(10))"
 mix run -e "IO.puts(HnScraper.fetch_newest_news_json(10))"
 mix run -e "HnScraper.Scheduler.next_run_time()"
 
 
-psql -U postgres -h localhost\
+# ========== 数据库说明 (SQLite) ==========
+# 本项目使用本地 SQLite 数据库 (hn_scraper.db)
+# 数据库文件会自动创建，表结构也会在运行时自动初始化
+# 无需手动安装或配置数据库服务
 
+# 查看数据库内容（需安装 sqlite3 命令行工具）
+# sqlite3 hn_scraper.db "SELECT * FROM hn_news LIMIT 5;"
 
--- 1. 创建数据库
-CREATE DATABASE hn_scraper;
--- 2. 连接到数据库
-\c hn_scraper
--- 3. 创建新闻表
-CREATE TABLE hn_news (
-    id SERIAL PRIMARY KEY,                          -- 自增主键
-    rank_id INTEGER NOT NULL,                       -- 排名序号
-    up_id VARCHAR(20) NOT NULL UNIQUE,              -- HN新闻唯一ID
-    url TEXT,                                       -- 新闻链接
-    title TEXT NOT NULL,                            -- 新闻标题
-    news_type VARCHAR(20) DEFAULT 'newest',         -- 新闻类型: 'top' 或 'newest'
-    news_time TIMESTAMP,                            -- 新闻发布时间
-    create_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,-- 记录创建时间
-    insert_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP -- 数据插入时间
-
--- 4. 创建索引（提高查询效率）
-CREATE INDEX idx_hn_news_up_id ON hn_news(up_id);
-CREATE INDEX idx_hn_news_news_type ON hn_news(news_type);
-CREATE INDEX idx_hn_news_create_time ON hn_news(create_time);
--- 5. 添加注释
-COMMENT ON TABLE hn_news IS 'Hacker News 新闻数据表';
-COMMENT ON COLUMN hn_news.rank_id IS '排名序号';
-COMMENT ON COLUMN hn_news.up_id IS 'HN新闻唯一ID';
-COMMENT ON COLUMN hn_news.url IS '新闻链接';
-COMMENT ON COLUMN hn_news.title IS '新闻标题';
-COMMENT ON COLUMN hn_news.news_type IS '新闻类型: top(热门) 或 newest(最新)';
-COMMENT ON COLUMN hn_news.news_time IS '新闻发布时间';
-COMMENT ON COLUMN hn_news.create_time IS '记录创建时间';
-COMMENT ON COLUMN hn_news.insert_time IS '数据插入时间';    
-
-
-表结构说明：
-
-字段	类型	说明
-id	SERIAL	自增主键
-rank_id	INTEGER	爬取时的排名序号
-up_id	VARCHAR(20)	HN新闻唯一ID（设为UNIQUE防重复）
-url	TEXT	新闻链接
-title	TEXT	新闻标题
-news_type	VARCHAR(20)	区分热门(top)或最新(newest)
-news_time	TIMESTAMP	新闻发布时间
-create_time	TIMESTAMP	记录创建时间（自动填充）
-insert_time	TIMESTAMP	数据插入时间（自动填充）
-创建完成后你可以用 \dt 查看表，用 \d hn_news 查看表结构
+# 表结构说明：
+# id          INTEGER PRIMARY KEY AUTOINCREMENT
+# rank_id     INTEGER
+# up_id       TEXT UNIQUE
+# url         TEXT
+# title       TEXT
+# news_type   TEXT (default 'newest')
+# news_time   TEXT
+# create_time TEXT
+# insert_time TEXT
 
 
 
@@ -101,3 +70,53 @@ API 接口：
 HnScraper.Scheduler.next_run_time() - 查看下次运行时间
 HnScraper.Scheduler.run_now() - 立即手动触发
 HnScraper.Scheduler.stop() - 停止调度器
+
+✅ 数据库模块已修改为使用本地 SQLite 数据库！
+
+主要变更：
+
+依赖变更：将 postgrex 替换为 exqlite (SQLite 驱动)。
+代码重构：重写了 lib/hn_scraper/db.ex，现在会自动创建 hn_scraper.db 文件和相关表结构。
+零配置：不再需要安装或配置 PostgreSQL 服务，程序运行时会自动初始化数据库。
+验证结果：
+
+运行爬虫测试成功：✓ top 新闻入库成功 / ✓ newest 新闻入库成功。
+如果入库失败，降级保存到文件功能的逻辑保持不变。
+使用方法（保持不变）：
+
+bash
+mix run -e 'HnScraper.run("2026-02-09 21:30:00", 5)'
+查看数据： 你可以使用 sqlite3 命令行工具（如果安装了）查看数据：
+
+
+
+mix run -e "HnScraper.Scheduler.next_run_time()"
+这只是启动应用 -> 打印下次运行时间 -> 然后立即退出了。
+如何让它在后台持续运行？
+你需要使用 --no-halt 参数让应用保持运行，并配合 nohup 放入后台：
+
+bash
+# 后台启动命令
+nohup mix run --no-halt > scraper.log 2>&1 &
+如何验证它在运行？
+启动后，你可以通过以下命令检查：
+
+查看进程：ps aux | grep mix 或 ps aux | grep beam
+查看日志：tail -f scraper.log
+
+基于 SQLite 的新版爬虫 正在后台运行 (PID: 1910891)。
+
+之前的 PG 版本 已经停止，不会与新版本冲突。
+
+常用维护命令：
+
+查看运行状态
+bash
+ps aux | grep mix
+查看实时日志
+bash
+tail -f scraper.log
+(注：如果日志有延迟，是因为 buffering，可以等待片刻或观察数据库文件变化)
+停止服务
+bash
+pkill -f "mix run --no-halt"

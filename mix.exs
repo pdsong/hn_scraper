@@ -22,7 +22,7 @@ defmodule HnScraper.MixProject do
     [
       {:httpoison, "~> 2.0"},
       {:floki, "~> 0.35"},
-      {:postgrex, "~> 0.17"}
+      {:exqlite, "~> 0.13"}
     ]
   end
 end

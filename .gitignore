@@ -24,3 +24,5 @@ hn_scraper-*.tar
 
 # Temporary files, for example, from tests.
 /tmp/
+
+hn_scraper.db
